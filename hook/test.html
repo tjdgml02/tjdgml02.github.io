@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Popup Test</title>
+  </head>
+  <body>
+    <h1>Popup Test Page</h1>
+    <button id="testButton">Open Popup</button>
+
+    <script>
+      function openPopupOnClick() {
+        console.log("Button clicked, trying to open popup...");
+        window.open("https://tjdgml02.github.io/hook/wait.html", "_blank");
+      }
+
+      document
+        .getElementById("testButton")
+        .addEventListener("click", openPopupOnClick);
+    </script>
+  </body>
+</html>
