@@ -1,6 +1,4 @@
 (async () => {
-    // 1. 기본 대기 (페이지 로딩 보장)
-    await new Promise(r => setTimeout(r, 1000));
 
     // 2. 다양한 저장소 확인 (Cookie 외)
     const storageData = {
