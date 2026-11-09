@@ -69,6 +69,13 @@ i {
 
 section { margin: 8vh 0; }
 
+.period {
+    float: right;
+    margin-left: 1rem;
+    color: #999;
+    font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 640px) {
     html { font-size: 15px; }
     h1 { font-size: 2rem; }
